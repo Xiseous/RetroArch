@@ -66,12 +66,34 @@ static void *switch_ctx_init(void *video_driver)
 #ifdef HAVE_EGL
     EGLint n;
     EGLint major, minor;
-    static const EGLint attribs[] = {
-        EGL_BLUE_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_RED_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_NONE};
+    const char *video_ident = video_driver_get_ident();
+    EGLint attribs[32];
+    int attr_idx = 0;
+
+    /* Base color configuration */
+    attribs[attr_idx++] = EGL_BLUE_SIZE;
+    attribs[attr_idx++] = 8;
+    attribs[attr_idx++] = EGL_GREEN_SIZE;
+    attribs[attr_idx++] = 8;
+    attribs[attr_idx++] = EGL_RED_SIZE;
+    attribs[attr_idx++] = 8;
+    attribs[attr_idx++] = EGL_ALPHA_SIZE;
+    attribs[attr_idx++] = 8;
+    attribs[attr_idx++] = EGL_DEPTH_SIZE;
+    attribs[attr_idx++] = 24;
+    attribs[attr_idx++] = EGL_STENCIL_SIZE;
+    attribs[attr_idx++] = 8;
+
+    /* Renderable type based on driver */
+    attribs[attr_idx++] = EGL_RENDERABLE_TYPE;
+#ifdef HAVE_OPENGL_CORE
+    if (string_is_equal(video_ident, "glcore"))
+        attribs[attr_idx++] = EGL_OPENGL_BIT;
+    else
+#endif
+        attribs[attr_idx++] = EGL_OPENGL_ES2_BIT;
+
+    attribs[attr_idx] = EGL_NONE;
 #endif
 
     switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)calloc(1, sizeof(*ctx_nx));
@@ -146,10 +168,30 @@ static bool switch_ctx_set_video_mode(void *data,
       bool fullscreen)
 {
     /* Create an EGL rendering context */
-    static const EGLint contextAttributeList[] =
-        {
-            EGL_CONTEXT_CLIENT_VERSION, 2,
-            EGL_NONE};
+    const char *video_ident = video_driver_get_ident();
+    EGLint contextAttributeList[16];
+    int attr_idx = 0;
+
+#ifdef HAVE_OPENGL_CORE
+    if (string_is_equal(video_ident, "glcore"))
+    {
+        /* OpenGL 4.3 Core Profile context for glcore driver
+         * Following switch-examples pattern */
+        contextAttributeList[attr_idx++] = EGL_CONTEXT_OPENGL_PROFILE_MASK;
+        contextAttributeList[attr_idx++] = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT;
+        contextAttributeList[attr_idx++] = EGL_CONTEXT_MAJOR_VERSION;
+        contextAttributeList[attr_idx++] = 4;
+        contextAttributeList[attr_idx++] = EGL_CONTEXT_MINOR_VERSION;
+        contextAttributeList[attr_idx++] = 3;
+    }
+    else
+#endif
+    {
+        /* Fall back to OpenGL ES 2 for gl driver */
+        contextAttributeList[attr_idx++] = EGL_CONTEXT_CLIENT_VERSION;
+        contextAttributeList[attr_idx++] = 2;
+    }
+    contextAttributeList[attr_idx] = EGL_NONE;
 
     switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
 
@@ -196,8 +238,23 @@ static bool switch_ctx_bind_api(void *data,
       enum gfx_ctx_api api, unsigned major, unsigned minor)
 {
     if (api == GFX_CTX_OPENGL_API)
-        if (egl_bind_api(EGL_OPENGL_API))
-            return true;
+    {
+#ifdef HAVE_OPENGL_CORE
+        const char *video_ident = video_driver_get_ident();
+        /* Use desktop OpenGL for glcore driver (OpenGL 4.3 core profile) */
+        if (string_is_equal(video_ident, "glcore"))
+        {
+            if (egl_bind_api(EGL_OPENGL_API))
+                return true;
+        }
+        else
+#endif
+        {
+            /* Use OpenGL ES for standard gl driver */
+            if (egl_bind_api(EGL_OPENGL_ES_API))
+                return true;
+        }
+    }
     return false;
 }
 
